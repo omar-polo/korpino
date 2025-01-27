@@ -1,9 +1,9 @@
 [submodule "got"]
-	path = got
+	path = x/got
 	url = ssh://anonymous@got.gameoftrees.org/got.git
 [submodule "got-www"]
-	path = got-www
+	path = x/got-www
 	url = ssh://anonymous@got.gameoftrees.org/got-www.git
 [submodule "diff"]
-	path = diff
+	path = x/diff
 	url = ssh://anonymous@got.gameoftrees.org/diff.git
