@@ -1,0 +1,3 @@
+[submodule "got"]
+	path = got
+	url = ssh://anonymous@got.gameoftrees.org/got.git
