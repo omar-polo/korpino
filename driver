@@ -1,0 +1,117 @@
+#!/bin/sh
+
+set -e
+set -o pipefail
+
+progname="$(basename "$0")"
+
+usage() {
+	echo "Usage: $progname [-p plakar] [-r rounds] [-R repo] [-t tmpdir]" >&2
+	exit 1
+}
+
+log() {
+	now=$(date +'%Y-%m-%d %H:%M')
+	echo "$progname: $now: $@" >&2
+}
+
+init() {
+	if [ "$1" = reset ]; then
+		rm -rf "$repo" ~/.cache/plakar
+	fi
+	$plakar create -no-encryption || {
+		code=$?
+		log "plakar init failed with code $code"
+		exit $code
+	}
+}
+
+submodules() {
+	filter='//'
+	case "$1" in
+	inactive)	filter='/^-/' ;;
+	active)		filter='/^ /' ;;
+	esac
+
+	git submodule | awk "$filter"'{ print $2 }'
+}
+
+plakar=plakar
+repo=$HOME/.plakar
+rounds=50
+tmpdir=/tmp/
+while getopts p:r:R:t: name; do
+	case $name in
+	p)	plakar="$OPTARG" ;;
+	r)	rounds="$OPTARG" ;;
+	R)	repo="$OPTARG" ;;
+	t)	tmpdir="$OPTARG" ;;
+	?)	usage ;;
+	esac
+done
+shift $(($OPTIND - 1))
+test $# -ne 0 && usage
+
+log "starting with config: plakar=$plakar rounds=$rounds repo=$repo tmpdir=$tmpdir"
+plakar="$plakar at $repo"
+init reset
+
+round=0
+while [ "$round" -lt "$rounds" ]; do
+	round=$((round + 1))
+	log ">>> round $round"
+
+	for sub in $(submodules); do
+		git submodule deinit "$sub" >/dev/null
+	done
+
+	submodules inactive | sort -R | while read sub; do
+		log "$round: checking out $sub"
+		git submodule --quiet update --init --checkout "$sub"
+
+		$plakar backup -quiet || {
+			code=$?
+			log "$round: backup failed with $code; exiting"
+			exit $code
+		}
+
+		snapid=$($plakar ls | awk '{x=$2}END{print x}')
+		$plakar check -quiet $snapid || {
+			code=$?
+			log "$round: check of $snapid failed; exiting"
+			exit $code
+		}
+
+		d=$(mktemp -d)
+		$plakar restore -quiet -to "$d/" $snapid || {
+			code=$?
+			log "$round: failed to restore $snapid to $d"
+			rm -rf "$d"
+			exit $code
+		}
+
+		diff -r . "$d/$PWD" || {
+			code=$?
+			log "diff exit code $code"
+			log "$round: data restored from snapshot $d doesn't match the expected state"
+			log "$round: submodules: $(submodules active)"
+			rm -rf "$d"
+			exit $code
+		}
+		rm -rf "$d"
+	done
+
+	log "$round: randomly remove snapshots"
+	# plakar rm is too chatty
+	$plakar ls | awk 'BEGIN{srand()} rand() < 0.3 {print $2}' | tee /dev/stderr | xargs -n1 "$plakar" rm 2>/dev/null
+
+	log "$round: maintenance"
+	$plakar maintenance
+
+	log "$round: full repo check"
+	$plakar check -quiet || {
+		code=$?
+		log "$round: full repo check failed with code $code"
+		exit $code
+	}
+done
